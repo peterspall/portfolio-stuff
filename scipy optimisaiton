@@ -1,0 +1,43 @@
+import numpy as np
+from scipy.optimize import minimize ## there is no maximise function in scipy
+
+def optimize_sharpe_ratio():
+    alpha = np.array([0.02, -0.01, 0.03, -0.02, 0.04])
+    beta = np.array([0.8, 1.2, 0.9, 1.1, 1.3])  
+    residual_var = np.array([0.05, 0.08, 0.06, 0.09, 0.12])
+    
+    E_Rm = 0.08
+    var_m = 0.15**2  ## market variance
+    
+    def negative_sharpe(weights):
+        Ap = np.sum(weights * alpha)
+        Bp = np.sum(weights * beta)
+        E_Rp = Ap + E_Rm * Bp
+        portfolio_variance = (Bp**2) * var_m + np.sum(weights**2 * residual_var)
+        portfolio_std = np.sqrt(portfolio_variance)
+        sharpe = E_Rp / portfolio_std
+        return -sharpe
+    
+    constraint = {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}  ## must put the constraints in a dictionary for scipy
+    bounds = [(0, 1) for _ in range(5)]
+    
+    w0 = np.array([0.2, 0.2, 0.2, 0.2, 0.2])  ## must have innitialy wightings in order to run
+    
+    result = minimize(negative_sharpe, w0, method='SLSQP', bounds=bounds, constraints=constraint)
+    
+    optimal_weights = result.x
+    
+    Ap = np.sum(optimal_weights * alpha)
+    Bp = np.sum(optimal_weights * beta)
+    E_Rp = Ap + E_Rm * Bp
+    portfolio_variance = (Bp**2) * var_m + np.sum(optimal_weights**2 * residual_var)
+    portfolio_std = np.sqrt(portfolio_variance)
+    final_sharpe = E_Rp / portfolio_std
+    
+    print("optimla weighting:")
+    for i, w in enumerate(optimal_weights):
+        print(f"stock {i+1}: {w:.3f}")
+    print(f"Sum of weights: {np.sum(optimal_weights)}")
+    print(f"Sharpe ratio: {final_sharpe:.4f}")
+
+## to run just optimize_sharpe_ratio()
