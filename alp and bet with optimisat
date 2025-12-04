@@ -1,1 +1,141 @@
+import numpy as np
+from scipy.optimize import minimize
+import yfinance as yf
+from datetime import datetime, timedelta
+
+def optimize_sharpe_ratio(ticker_list, years=5):
+
+    ## uses previous function for parameters
+    params = get_parameters_from_data(ticker_list, years)
+    
+    if len(params['alpha']) == 0:
+        print("Error: No valid data found")
+        return None
+    
+    alpha = params['alpha']
+    beta = params['beta']
+    residual_var = params['residual_var']
+    E_Rm = params['E_Rm']
+    var_m = params['var_m']
+    Rf = params['Rf']  ## take rf
+
+    n_stocks = len(alpha)
+    
+    print("parameters from historical data:")
+    print(f"E_Rm = {E_Rm:.6f}")
+    print(f"var_m = {var_m:.6f}")
+    print(f"Rf = {Rf:.6f}")
+    print("\nstock values:")
+    for i, ticker in enumerate(ticker_list):
+        print(f"{ticker}: alp={alpha[i]:.6f}, bet={beta[i]:.4f}, var(e)={residual_var[i]:.6f}")
+    
+    ## added Rf as it is supposedly incorrect without it
+    def negative_sharpe(weights):
+        Ap = np.sum(weights * alpha)
+        Bp = np.sum(weights * beta)
+        
+        ## can take out rf as constant
+        E_Rp = Rf + Ap + Bp * (E_Rm - Rf)
+        
+        portfolio_variance = (Bp**2) * var_m + np.sum(weights**2 * residual_var)
+        portfolio_std = np.sqrt(portfolio_variance)
+        sharpe = (E_Rp - Rf) / portfolio_std  ## rf here again
+        return -sharpe
+    
+    ## constriants
+    constraint = {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}
+    
+    bounds = [(0.05, 40) for _ in range(n_stocks)]
+    
+    w0 = np.ones(n_stocks) / n_stocks  ## weighting starts as equal
+    
+    ## 
+    result = minimize(negative_sharpe, w0, method='SLSQP', bounds=bounds, constraints=constraint)
+    
+    optimal_weights = result.x
+    
+    ## calucluations with rf again
+    Ap = np.sum(optimal_weights * alpha)
+    Bp = np.sum(optimal_weights * beta)
+    E_Rp = Rf + Ap + Bp * (E_Rm - Rf)  ## rf here 
+    portfolio_variance = (Bp**2) * var_m + np.sum(optimal_weights**2 * residual_var)
+    portfolio_std = np.sqrt(portfolio_variance)
+    final_sharpe = (E_Rp - Rf) / portfolio_std  ## rf here
+    
+    print("\n")
+    print("optmisation results:")
+    print("weights:")
+    for i, (ticker, w) in enumerate(zip(ticker_list, optimal_weights)):
+        print(f"  {ticker}: {w:.4f} ({w*100:.1f}%)")
+    print(f"portfolio Alpha (Ap): {Ap:.6f}")
+    print(f"portfolio Beta (Bp): {Bp:.4f}")
+    print(f"expected Return ({E_Rp*12:.2f}% per year)")
+    print(f"portfolio standar dev: {portfolio_std:.6f}")
+    print(f"SR: {final_sharpe:.4f}")
+    
+    return {'weights': optimal_weights,
+        'sharpe': final_sharpe,
+        'alpha_portfolio': Ap,
+        'beta_portfolio': Bp,
+        'expected_return': E_Rp,
+        'volatility': portfolio_std}
+
+def get_parameters_from_data(ticker_list, years=5):
+
+    ## get market data
+    market = yf.Ticker('^GSPC')
+    market_data = market.history(period=f'{years}y', interval='1d')
+    market_prices = market_data['Close'].values
+    market_returns = np.diff(market_prices) / market_prices[:-1]
+    
+    ## get expectted retuen and var market
+    E_Rm = np.mean(market_returns)
+    var_m = np.var(market_returns, ddof=1)
+    
+    ## set empty lists for to be filled with values for each stock 
+    alpha = []
+    beta = []
+    residual_var = []
+    
+    ## get parameters for each stock
+    for ticker in ticker_list:
+        stock = yf.Ticker(ticker)
+        stock_data = stock.history(period=f'{years}y', interval='1mo')
+        stock_prices = stock_data['Close'].values
+        
+        if len(stock_prices) < 2:
+            print(f"Warning: Insufficient data for {ticker}")
+            continue
+            
+        stock_returns = np.diff(stock_prices) / stock_prices[:-1]
+        
+        ## encase missing data
+        min_len = min(len(stock_returns), len(market_returns))
+        stock_r = stock_returns[:min_len]
+        market_r = market_returns[:min_len]
+        
+        ## get alpha beta for stock
+        beta_i = np.cov(stock_r, market_r)[0, 1] / var_m
+        alpha_i = np.mean(stock_r) - beta_i * np.mean(market_r)
+        
+        ## get stocks specific risk, residual risk
+        predicted = alpha_i + beta_i * market_r
+        residuals = stock_r - predicted
+        residual_var_i = np.var(residuals, ddof=2)
+        
+        alpha.append(alpha_i)
+        beta.append(beta_i)
+        residual_var.append(residual_var_i)
+    
+    return {'alpha': np.array(alpha),        
+        'beta': np.array(beta),          
+        'residual_var': np.array(residual_var),  
+        'E_Rm': E_Rm,                    
+        'var_m': var_m,                  
+        'Rf': 0.05/12} ## playing with rf results in massive gains
+
+
+
+crypto_portfolio = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'ADA-USD', 'DOT-USD']
+## run with    results = optimize_sharpe_ratio(defense_portfolio, years=5)
 
